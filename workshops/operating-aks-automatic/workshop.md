@@ -26,7 +26,7 @@ By the end of this lab you will be able to:
 - Ensure security best practices with Azure Policy and Deployment Safeguards
 - Sync configurations to the cluster with Azure App Configuration Provider for Kubernetes
 - Leverage AKS Service Connector for passwordless integration with Azure services
-- Appropirately scale workloads across nodes with AKS Node Autoprovision
+- Appropriately scale workloads across nodes with AKS Node Autoprovision
 - Review workload scheduling best practices
 - Troubleshoot workload failures with monitoring tools and Microsoft Copilot for Azure
 
@@ -51,7 +51,7 @@ All command-line instructions in this lab should be executed in a Bash shell. If
 Before you get started, you should log in to the Azure CLI with the following command:
 
 ```bash
-az login
+az login --use-device-code
 ```
 
 You will also need to install the **aks-preview** extension to leverage preview features in AKS.
@@ -63,7 +63,7 @@ az extension add --name aks-preview
 Finally set the default location for resources that you will create in this lab using Azure CLI.
 
 ```bash
-az configure --defaults location=$(az group show -n myResourceGroup --query location -o tsv)
+az configure --defaults location=$(az group show -n myresourcegroup --query location -o tsv)
 ```
 
 You are now ready to get started with the lab.
@@ -88,7 +88,7 @@ To grant permissions to the AKS cluster, you will need to assign a role. The fol
 Using Azure Cloud Shell, run the following command to get the AKS cluster credentials
 
 ```bash
-az aks get-credentials --resource-group myResourceGroup --name myAKSCluster
+az aks get-credentials --resource-group myresourcegroup --name myakscluster
 ```
 
 Create a namespace for the developer to use.
@@ -108,7 +108,7 @@ az aks install-cli
 Run the following command to get the AKS cluster's resource ID and the developer's user principal ID.
 
 ```bash
-AKS_ID=$(az aks show --resource-group myResourceGroup --name myAKSCluster --query id --output tsv)
+AKS_ID=$(az aks show --resource-group myresourcegroup --name myakscluster --query id --output tsv)
 DEV_USER_PRINCIPAL_ID=$(az ad user show --id @lab.CloudPortalCredential(User2).Username --query id --output tsv)
 ```
 
@@ -142,7 +142,7 @@ You should see the output **yes**. This means the developer has the necessary pe
 
 ```bash
 helm repo add aks-store-demo https://azure-samples.github.io/aks-store-demo
-helm install demo aks-store-demo/aks-store-demo-chart --namespace dev --set aiService.create=true
+helm install demo aks-store-demo/aks-store-demo-chart --namespace dev
 ```
 
 You should the application has successfully deployed in the **dev** namespace.
@@ -236,7 +236,7 @@ EOF
 
 You should now see that we've satisfied all but one best practice, which we'll address later.
 
-### More policy with OPA
+### Custom policy enforcement
 
 In addition to the Deployment Safeguards Azure Policy Initiative, you can also leverage other Azure Policy definitions to enforce organizational standards and compliance. Azure Policy for AKS is enabled by default in AKS Automatic and you can either assign built-in policies or create custom policies to enforce compliance. When the Azure Policy for AKS feature is enabled, Open Policy Agent (OPA) Gatekeeper is deployed in the AKS cluster. OPA Gatekeeper is a policy engine for Kubernetes that allows you to enforce policies written using Rego, a high-level declarative language.
 
@@ -246,17 +246,19 @@ These Pods are running in the **gatekeeper-system** namespace.
 kubectl get pods -n gatekeeper-system
 ```
 
-However, it is worth noting that the OPA Gatekeeper cannot be used outside of Azure Policy. If you want to implement a ConstraintTemplate, you'll need to translate it to an Azure Policy definition and assign it to the AKS cluster.
+However, it is worth noting that the OPA Gatekeeper cannot be used outside of Azure Policy. If you want to implement a [ConstraintTemplate](https://open-policy-agent.github.io/gatekeeper/website/docs/constrainttemplates/), you'll need to translate it to an Azure Policy definition and assign it to the AKS cluster.
 
-As an example, let's try deploying a new ConstraintTemplate to the AKS cluster.
+As an example, let's try deploying a ConstraintTemplate to the AKS cluster.
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/pauldotyu/ignite/refs/heads/main/constrainttemplate.yaml
 ```
 
-We can work around this by translating the ConstraintTemplate to an Azure Policy definition using the Azure Policy extension for Visual Studio Code. You can install the extension from the Visual Studio Code Marketplace [here](https://marketplace.visualstudio.com/items?itemName=AzurePolicy.azurepolicyextension).
+You will see a message "_This cluster is governed by Azure Policy. Policies must be created through Azure._"
 
-Open Visual Studio Code and make sure the Azure Policy extension is installed. Using your keyboard, press **Ctrl+Shift+P** to open the command palette and type **Azure: Sign in** then use the web browser to authenticate with your admin user account.
+In AKS clusters with Azure Policy enabled, you need to translate the ConstraintTemplate to an Azure Policy definition. There is an Azure Policy extension for Visual Studio Code which makes this process a bit easier. From there, create the policy definition and assign the policy to the cluster. There are **azure-policy-\*** Pods running in the cluster that are responsible for listening to Azure Policy assignments, translating them to OPA Gatekeeper ConstraintTemplates, and reporting the results back to Azure Policy.
+
+Open Visual Studio Code and install the [Azure Policy extension](https://marketplace.visualstudio.com/items?itemName=AzurePolicy.azurepolicyextension). After you've installed the extension, press **Ctrl+Shift+P** on your keyboard to open the command palette and type **Azure: Sign in** then use the web browser to authenticate with your admin user account.
 
 > [!NOTE]
 > If you see multiple sign-in options, choose the one that has `azure-account.login` next to it.
@@ -269,7 +271,7 @@ Next, press **Ctrl+Shift+P** again and type **Azure: Select Subscriptions** then
 Open the terminal in Visual Studio Code and download the ConstraintTemplate file to your local machine then open the file in Visual Studio Code by running the following commands.
 
 ```bash
-wget https://raw.githubusercontent.com/pauldotyu/ignite/refs/heads/main/constrainttemplate.yaml
+curl -o constrainttemplate.yaml https://raw.githubusercontent.com/pauldotyu/ignite/refs/heads/main/constrainttemplate.yaml
 code constrainttemplate.yaml
 ```
 
@@ -277,39 +279,53 @@ With the constrainttemplate.yaml file open in Visual Studio Code, press **Ctrl+S
 
 This will generate a new Azure Policy definition in the JSON format. You will need to fill in details everywhere you see the text `/* EDIT HERE */`. For **apiGroups** field, you can use the value `[""]` to target all API groups and for the **kind** field, you can use the value `["Pod"]` to target Pods.
 
-Here is what the JSON should look like: https://raw.githubusercontent.com/pauldotyu/ignite/refs/heads/main/constrainttemplate-as-policy.json
+Here is what the JSON should look like: https://raw.githubusercontent.com/pauldotyu/ignite/refs/heads/main/constrainttemplate-as-policy.json.
 
-Let's deploy the custom policy definition and assign it to the AKS cluster.
+Let's deploy the custom policy definition and assign it to the AKS cluster. Open this link in a new browser tab and copy the JSON.
 
-Navigate to the Azure Portal and search for **Policy** in the search bar.
+Navigate to the Azure Portal and type `policy` in the search bar.
 
-Click on **Azure Policy** and then click on **Definitions** under the **Authoring** section.
+Click on **Policy** under **Services**, then click on **Definitions** under the **Authoring** section.
 
 Click on **+ Policy definition** then enter the following details:
 
 - **Definition location**: Click the button next to the textbox, then select your subscription
-- **Name**: Enter `AKS Approved registries only`
-- **Description**: Enter `This policy requires that all containers in an AKS cluster are sourced from approved container registries.`
+- **Name**: `[AKS] Approved registries only`
+- **Description**: `This policy requires that all containers in an AKS cluster are sourced from approved container registries.`
 - **Category**: Click **Use existing** then select **Kubernetes** from the dropdown
-- **Policy rule**: Copy and paste the JSON from the the sample policy definition file [here](https://raw.githubusercontent.com/pauldotyu/ignite/refs/heads/main/constrainttemplate-as-policy.json)
+- **Policy rule**: Copy the sample policy definition file [here](https://raw.githubusercontent.com/pauldotyu/ignite/refs/heads/main/constrainttemplate-as-policy.json) then paste it in the textbox.
 
-Click **Save**
+Click **Save** then click on **Assign policy** button.
 
-Next, click on **Assign policy** button and for **Scope** you can optionally click the button next to the textbox, then select the resource group that contains the AKS cluster.
+In the **Basics** tab, enter the following details:
 
-Click **Next** then uncheck the **Only show parameters that need input or review** checkbox. This will enable you to change the **Effect** to **Deny**.
+- **Scope**: Click the button next to the textbox, select the resource group that contains the AKS cluster, and don't forget to click **Select**
+- Leave the rest of the fields as default
 
-In the **Image registry** parameter, enter the value of `mcr.microsoft.com/` then click **Review + create**.
+Click **Next**
 
-Click the **Create** button to assign the policy to the AKS cluster.
+In the **Parameters** enter the following details:
 
-This can take up to 20 minutes to take effect. We will come back to this later.
+- Uncheck the **Only show parameters that need input or review** checkbox
+- **Effect**: `deny`
+- **Namespace exclusions**: `["kube-system","gatekeeper-system","app-routing-system","azappconfig-system"]`
+- **Image registry**: Enter your container registry URL, for example `mycontainerregistry.azureci.io/`
+
+Click **Review + create** then click **Create**
+
+This policy assignment can take up to 20 minutes to take effect. You can try to speed up the policy scan with the following command.
+
+```bash
+az policy state trigger-scan --resource-group myresourcegroup --no-wait
+```
 
 For more information on how to create a policy definition from a ConstraintTemplate or MutationTemplate, refer to the following documentation links:
 
 - [Create policy definition from a constraint template or mutation template](https://learn.microsoft.com/azure/governance/policy/how-to/extension-for-vscode#create-policy-definition-from-a-constraint-template-or-mutation-template)
 - [Understand Azure Policy for Kubernetes clusters](https://learn.microsoft.com/azure/governance/policy/concepts/policy-for-kubernetes)
 - [OPA Gatekeeper Library](https://github.com/open-policy-agent/gatekeeper-library/)
+
+Great job! You have successfully enforced custom policies in the AKS cluster. Once the policy assignment has taken effect, you can try deploying a Pod with an image from an unapproved container registry to see the policy in action.
 
 ===
 
@@ -323,32 +339,43 @@ Azure Key Vault is a cloud service for securely storing and accessing secrets. A
 
 We can leverage these two services to store our application configurations and secrets and make them available to our workloads running in the AKS cluster.
 
+#### Azure App Configuration
+
 Let's start by creating an Azure App Configuration store.
 
 ```bash
-AC_NAME=$(az appconfig create --name myAppConfig$RANDOM --resource-group myResourceGroup --query name -o tsv)
+AC_NAME=$(az appconfig create --name myappconfig$RANDOM --resource-group myresourcegroup --query name -o tsv)
 ```
 
 It's best practice to create a User-Assigned Managed Identity to access the Azure App Configuration store. This way, you can control the access to the store and ensure that only the workloads that need access to the configurations can access them.
 
 ```bash
-AC_ID=$(az identity create --name $AC_NAME-identity --resource-group myResourceGroup --query id -o tsv)
+AC_ID=$(az identity create --name $AC_NAME-id --resource-group myresourcegroup --query id -o tsv)
 ```
 
-AKS offers an extension called the Azure App Configuratoin Provider for Kubernetes that allows you to sync configurations from Azure App Configuration to Kubernetes ConfigMaps. This extension is not installed by default in AKS Automatic clusters, so you will need to install it manually.
+Create some sample key-value pairs in the Azure App Configuration store.
+
+```bash
+az appconfig kv set --name $AC_NAME --key Key1 --value Value1 --yes
+az appconfig kv set --name $AC_NAME --key Key2 --value Value2 --yes
+az appconfig kv set --name $AC_NAME --key Key3 --value Value3 --yes
+```
+
+#### Azure App Configuration Provider for Kubernetes
+
+AKS offers an extension called the Azure App Configuration Provider for Kubernetes that allows you to sync configurations from Azure App Configuration to Kubernetes ConfigMaps. This extension is not installed by default in AKS Automatic clusters, so you will need to install it manually.
 
 ```bash
 az k8s-extension create \
   --cluster-type managedClusters \
-  --cluster-name myAKSCluster \
-  --resource-group myResourceGroup \
+  --cluster-name myakscluster \
+  --resource-group myresourcegroup \
   --name appconfigurationkubernetesprovider \
   --extension-type Microsoft.AppConfiguration \
   --auto-upgrade false \
   --version 2.0.0
 ```
 
-> [!NOTE]
 > This can take up to 5 minutes to complete.
 
 After the extension has been created, you can verify that the Pods are running.
@@ -357,28 +384,17 @@ After the extension has been created, you can verify that the Pods are running.
 kubectl get pods -n azappconfig-system
 ```
 
-We also want to establish a passwordless connection between the AKS cluster and the Azure App Configuration store. We can do this by leveraging the AKS Service Connector. The AKS Service Connector is a managed service that allows you to connect your AKS cluster to other Azure services. It will take care of manual tasks like setting up the necessary Azure RBAC roles and federated credentials for autentication, creating the necesary Kubernetes Service Account, and creating any firewall rules needed to allow the AKS cluster to communicate with the Azure service.
+#### AKS Service Connector
+
+We also want to establish a passwordless connection between the AKS cluster and the Azure App Configuration store. We can do this by leveraging the AKS Service Connector. The AKS Service Connector is a managed service that allows you to connect your AKS cluster to other Azure services. It will take care of manual tasks like setting up the necessary Azure RBAC roles and federated credentials for authentication, creating the necessary Kubernetes Service Account, and creating any firewall rules needed to allow the AKS cluster to communicate with the Azure service.
 
 ```bash
-az aks connection create appconfig \
-  --resource-group myResourceGroup \
-  --name myAKSCluster \
-  --tg myResourceGroup \
-  --app-config $AC_NAME \
-  --workload-identity $AC_ID
+az aks connection create appconfig --resource-group myresourcegroup --name myakscluster --tg myresourcegroup --app-config $AC_NAME --workload-identity $AC_ID
 ```
+
+#### Syncing configurations
 
 The Azure App Configuration Provider for Kubernetes extension also installed new Custom Resource Definitions (CRDs) which you can use to sync configurations from Azure App Configuration to Kubernetes ConfigMaps.
-
-Before you deploy the sync configuration manifest, let's create some configurations that one of the applications will use.
-
-```bash
-az appconfig kv set --name $AC_NAME --key Key1 --value Value1 --yes
-az appconfig kv set --name $AC_NAME --key Key2 --value Value2 --yes
-az appconfig kv set --name $AC_NAME --key Key3 --value Value3 --yes
-az appconfig kv set --name $AC_NAME --key Key4 --value Value4 --yes
-az appconfig kv set --name $AC_NAME --key Key5 --value Value5 --yes
-```
 
 We can now deploy a sync configuration manifest to sync the configurations from Azure App Configuration to Kubernetes ConfigMaps. But first we will need some values for the manifest.
 
@@ -525,7 +541,7 @@ This NodePool manifest creates a new NodePool called **dev** with the following 
 Now that the dev team has their own NodePool, you can try scheduling a Pod that tolerates the taint that will be applied to the dev nodes. Before we do that, let's import the product-service container image into the Azure Container Registry. Remember we created a new Policy Definition that only allows images from allowed container registries.
 
 ```bash
-ACR_NAME=$(az acr list --resource-group myResourceGroup --query "[0].name" -o tsv)
+ACR_NAME=$(az acr list --resource-group myresourcegroup --query "[0].name" -o tsv)
 az acr import --name $ACR_NAME --source ghcr.io/azure-samples/aks-store-demo/product-service:1.5.2 --image product-service:1.5.2
 ```
 
